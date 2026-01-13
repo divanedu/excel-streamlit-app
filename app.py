@@ -1,4 +1,5 @@
 import io
+import time
 import pandas as pd
 import streamlit as st
 
@@ -11,12 +12,9 @@ from openpyxl.utils import get_column_letter, column_index_from_string
 # CODE 1 -> function
 # =========================
 def run_code_1(file_bytes: bytes) -> bytes:
-    # open workbook from memory
     in_buf = io.BytesIO(file_bytes)
     wb = load_workbook(in_buf)
 
-    # IMPORTANT:
-    # pandas needs a file-like object too; simplest is to re-use bytes
     xls_buf = io.BytesIO(file_bytes)
     xls = pd.ExcelFile(xls_buf)
 
@@ -59,9 +57,9 @@ def run_code_1(file_bytes: bytes) -> bytes:
     all_set = cust_set.union(supp_set)
 
     if not cust_set and not supp_set:
-        raise ValueError("Нет данных для формирования отчёта (код 1).")
+        raise ValueError("Код 1: нет данных для формирования отчёта.")
 
-    # ---- Build dfs
+    # Блок 1
     if cust_set:
         df_cust = pd.DataFrame(sorted(cust_set), columns=["Контрагент"])
         df_cust["1210"] = df_cust["Контрагент"].map(s1210).fillna(0) / 1000
@@ -71,6 +69,7 @@ def run_code_1(file_bytes: bytes) -> bytes:
     else:
         df_cust = pd.DataFrame(columns=["Контрагент", "1210", "3510", "сальдо заказчики"])
 
+    # Блок 2
     if supp_set:
         df_supp = pd.DataFrame(sorted(supp_set), columns=["Контрагент"])
         df_supp["1710"] = df_supp["Контрагент"].map(s1710).fillna(0) / 1000
@@ -80,6 +79,7 @@ def run_code_1(file_bytes: bytes) -> bytes:
     else:
         df_supp = pd.DataFrame(columns=["Контрагент", "1710", "3310", "сальдо поставщики"])
 
+    # Блок 3
     if all_set:
         df_total = pd.DataFrame(sorted(all_set), columns=["Контрагент"])
         df_total["1210"] = df_total["Контрагент"].map(s1210).fillna(0) / 1000
@@ -91,7 +91,6 @@ def run_code_1(file_bytes: bytes) -> bytes:
     else:
         df_total = pd.DataFrame(columns=["Контрагент", "общее сальдо"])
 
-    # ---- Write to sheet
     if "Сальдо PY" in wb.sheetnames:
         wb.remove(wb["Сальдо PY"])
     ws = wb.create_sheet("Сальдо PY")
@@ -122,7 +121,6 @@ def run_code_1(file_bytes: bytes) -> bytes:
     col_total_contr = start_col + 10
     col_total_saldo = start_col + 11
 
-    # block 1
     if not df_cust.empty:
         headers_cust = {
             col_cust_contr: "Контрагент",
@@ -151,7 +149,6 @@ def run_code_1(file_bytes: bytes) -> bytes:
                 cell.alignment = align_center
                 cell.number_format = number_format_acc
 
-    # block 2
     if not df_supp.empty:
         headers_supp = {
             col_supp_contr: "Контрагент",
@@ -180,7 +177,6 @@ def run_code_1(file_bytes: bytes) -> bytes:
                 cell.alignment = align_center
                 cell.number_format = number_format_acc
 
-    # block 3
     if not df_total.empty:
         headers_total = {
             col_total_contr: "Контрагент",
@@ -202,7 +198,6 @@ def run_code_1(file_bytes: bytes) -> bytes:
             cell.alignment = align_center
             cell.number_format = number_format_acc
 
-    # widths
     WIDTH_CONTR = 30
     WIDTH_NUM = 18
 
@@ -228,7 +223,7 @@ def run_code_2(file_bytes: bytes) -> bytes:
     wb = load_workbook(io.BytesIO(file_bytes))
 
     if 'Md' not in wb.sheetnames or 'Wd' not in wb.sheetnames:
-        raise ValueError("Нет листов Md и Wd (код 2).")
+        raise ValueError("Код 2: нет листов Md и Wd.")
 
     md_ws = wb['Md']
     whd_ws = wb['Wd']
@@ -392,6 +387,7 @@ def run_code_2(file_bytes: bytes) -> bytes:
 
     ws.column_dimensions['A'].width = 38
     ws.column_dimensions['B'].width = 38
+
     for col in numeric_cols:
         if column_index_from_string(col) < start_col_pay:
             ws.column_dimensions[col].width = 12.6
@@ -416,61 +412,182 @@ def run_code_2(file_bytes: bytes) -> bytes:
 
 
 # =========================
-# Streamlit UI
+# UI
 # =========================
-st.set_page_config(page_title="Excel Processor", layout="wide")
-st.title("Обработка Excel файла")
+st.set_page_config(
+    page_title="Excel Processor",
+    page_icon="✨",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
-uploaded = st.file_uploader("Загрузи Excel (.xlsx / .xlsm)", type=["xlsx", "xlsm"])
+# Global CSS (pretty + hide Streamlit chrome)
+st.markdown(
+    """
+    <style>
+      /* Hide Streamlit default elements */
+      #MainMenu {visibility: hidden;}
+      footer {visibility: hidden;}
+      header {visibility: hidden;}
 
-col1, col2, col3 = st.columns(3)
-with col1:
-    do_1 = st.checkbox("Запустить код 1 (Сальдо PY)", value=True)
-with col2:
-    do_2 = st.checkbox("Запустить код 2 (Контракты py)", value=False)
-with col3:
-    preview_rows = st.number_input("Строк в превью", min_value=5, max_value=200, value=30, step=5)
+      /* Layout tweaks */
+      .block-container {padding-top: 2.2rem; padding-bottom: 2.5rem; max-width: 1100px;}
 
-run = st.button("Запустить обработку", type="primary", disabled=(uploaded is None) or (not do_1 and not do_2))
+      /* Cards */
+      .card {
+        border: 1px solid rgba(255,255,255,0.12);
+        background: rgba(255,255,255,0.04);
+        border-radius: 18px;
+        padding: 18px 18px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.18);
+      }
+      .hero {
+        border-radius: 22px;
+        padding: 22px 22px;
+        background: radial-gradient(1200px circle at 10% 10%, rgba(125, 211, 252, 0.18), transparent 40%),
+                    radial-gradient(1200px circle at 90% 10%, rgba(167, 139, 250, 0.16), transparent 40%),
+                    rgba(255,255,255,0.03);
+        border: 1px solid rgba(255,255,255,0.10);
+        box-shadow: 0 18px 40px rgba(0,0,0,0.22);
+      }
+      .title {
+        font-size: 30px;
+        font-weight: 800;
+        letter-spacing: -0.02em;
+        margin: 0 0 4px 0;
+      }
+      .subtitle {
+        opacity: 0.85;
+        margin: 0;
+        font-size: 14px;
+      }
+      .small {
+        opacity: 0.75;
+        font-size: 12px;
+        margin-top: 8px;
+      }
 
-if run and uploaded is not None:
+      /* Buttons */
+      div.stDownloadButton > button,
+      div.stButton > button {
+        border-radius: 14px !important;
+        padding: 0.65rem 1rem !important;
+        font-weight: 700 !important;
+      }
+
+      /* File uploader */
+      [data-testid="stFileUploader"] section {
+        border-radius: 16px;
+        padding: 10px;
+      }
+
+      /* Radio style */
+      [role="radiogroup"] {
+        border-radius: 16px;
+        padding: 12px 12px 6px 12px;
+        border: 1px solid rgba(255,255,255,0.10);
+        background: rgba(255,255,255,0.03);
+      }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+st.markdown(
+    """
+    <div class="hero">
+      <div class="title">✨ Excel Processor</div>
+      <p class="subtitle">
+        Загрузите файл → выберите сценарий обработки → скачайте готовый Excel.
+      </p>
+      <div class="small">
+        Поддерживаемые форматы: <b>.xlsx</b>, <b>.xlsm</b> (без превью, только результат).
+      </div>
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
+st.write("")
+
+left, right = st.columns([1.05, 0.95], gap="large")
+
+with left:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    uploaded = st.file_uploader("1) Загрузите Excel файл", type=["xlsx", "xlsm"])
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.write("")
+
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    mode = st.radio(
+        "2) Выберите обработку",
+        options=["Код 1 — Сальдо PY", "Код 2 — Контракты py", "Оба (Код 1 → Код 2)"],
+        index=0,
+        horizontal=False
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+with right:
+    st.markdown('<div class="card">', unsafe_allow_html=True)
+    st.markdown("### 3) Запуск и скачивание")
+    st.caption("Нажмите «Обработать». После завершения появится кнопка скачивания готового файла.")
+
+    run_disabled = (uploaded is None)
+    run_btn = st.button("🚀 Обработать", type="primary", disabled=run_disabled)
+
+    status_box = st.empty()
+    progress = st.progress(0)
+
+    if uploaded is not None:
+        size_mb = len(uploaded.getvalue()) / (1024 * 1024)
+        st.markdown(f"**Файл:** `{uploaded.name}`  \n**Размер:** `{size_mb:.2f} MB`")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+st.write("")
+
+if run_btn:
     file_bytes = uploaded.getvalue()
 
+    # nice staged progress
     try:
+        status_box.info("Подготовка файла…")
+        progress.progress(10)
+        time.sleep(0.2)
+
         out_bytes = file_bytes
-        if do_1:
+
+        if mode in ["Код 1 — Сальдо PY", "Оба (Код 1 → Код 2)"]:
+            status_box.info("Выполняю Код 1 (Сальдо PY)…")
+            progress.progress(30)
             out_bytes = run_code_1(out_bytes)
-        if do_2:
+            progress.progress(55)
+
+        if mode in ["Код 2 — Контракты py", "Оба (Код 1 → Код 2)"]:
+            status_box.info("Выполняю Код 2 (Контракты py)…")
+            progress.progress(70)
             out_bytes = run_code_2(out_bytes)
+            progress.progress(90)
 
-        st.success("Готово! Ниже превью и кнопка скачивания.")
+        status_box.success("Готово! Можно скачивать результат.")
+        progress.progress(100)
 
-        # Preview: read workbook and show target sheets if they exist
-        wb_prev = load_workbook(io.BytesIO(out_bytes), data_only=True)
+        st.markdown('<div class="card">', unsafe_allow_html=True)
+        st.markdown("### ✅ Результат готов")
 
-        prev_cols = st.columns(2)
-        with prev_cols[0]:
-            if "Сальдо PY" in wb_prev.sheetnames:
-                st.subheader("Превью: Сальдо PY")
-                df_prev = pd.read_excel(io.BytesIO(out_bytes), sheet_name="Сальдо PY")
-                st.dataframe(df_prev.head(int(preview_rows)), use_container_width=True)
-            else:
-                st.info("Лист 'Сальдо PY' не найден (возможно код 1 не запускался).")
-
-        with prev_cols[1]:
-            if "Контракты py" in wb_prev.sheetnames:
-                st.subheader("Превью: Контракты py")
-                df_prev2 = pd.read_excel(io.BytesIO(out_bytes), sheet_name="Контракты py")
-                st.dataframe(df_prev2.head(int(preview_rows)), use_container_width=True)
-            else:
-                st.info("Лист 'Контракты py' не найден (возможно код 2 не запускался).")
-
+        # Decide mime (xlsx is fine for xlsm too, but keep generic)
         st.download_button(
-            label="Скачать обработанный файл",
+            label="⬇️ Скачать обработанный Excel",
             data=out_bytes,
             file_name=f"processed_{uploaded.name}",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
         )
 
+        st.caption("Если кнопка не появляется — значит обработка завершилась ошибкой выше.")
+        st.markdown("</div>", unsafe_allow_html=True)
+
     except Exception as e:
-        st.error(f"Ошибка: {e}")
+        progress.progress(0)
+        status_box.error(f"Ошибка: {e}")
