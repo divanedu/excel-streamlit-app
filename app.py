@@ -1,5 +1,7 @@
 import io
 import time
+from collections import defaultdict
+
 import pandas as pd
 import streamlit as st
 
@@ -12,20 +14,15 @@ from openpyxl.utils import get_column_letter, column_index_from_string
 # CODE 1 -> function
 # =========================
 def run_code_1(file_bytes: bytes) -> bytes:
-    in_buf = io.BytesIO(file_bytes)
-    wb = load_workbook(in_buf)
+    wb = load_workbook(io.BytesIO(file_bytes))
 
-    xls_buf = io.BytesIO(file_bytes)
-    xls = pd.ExcelFile(xls_buf)
-
+    xls = pd.ExcelFile(io.BytesIO(file_bytes))
     target_sheets = ["1210", "1710", "3310", "3510"]
     sheet_to_col_index = {"1210": 6, "1710": 6, "3310": 7, "3510": 7}
 
-    available_sheets = xls.sheet_names
     sheet_data = {}
-
     for sheet in target_sheets:
-        if sheet not in available_sheets:
+        if sheet not in xls.sheet_names:
             continue
 
         df = pd.read_excel(xls, sheet_name=sheet, header=0)
@@ -59,7 +56,7 @@ def run_code_1(file_bytes: bytes) -> bytes:
     if not cust_set and not supp_set:
         raise ValueError("Код 1: нет данных для формирования отчёта.")
 
-    # Блок 1
+    # Блок 1: заказчики
     if cust_set:
         df_cust = pd.DataFrame(sorted(cust_set), columns=["Контрагент"])
         df_cust["1210"] = df_cust["Контрагент"].map(s1210).fillna(0) / 1000
@@ -69,7 +66,7 @@ def run_code_1(file_bytes: bytes) -> bytes:
     else:
         df_cust = pd.DataFrame(columns=["Контрагент", "1210", "3510", "сальдо заказчики"])
 
-    # Блок 2
+    # Блок 2: поставщики
     if supp_set:
         df_supp = pd.DataFrame(sorted(supp_set), columns=["Контрагент"])
         df_supp["1710"] = df_supp["Контрагент"].map(s1710).fillna(0) / 1000
@@ -79,14 +76,14 @@ def run_code_1(file_bytes: bytes) -> bytes:
     else:
         df_supp = pd.DataFrame(columns=["Контрагент", "1710", "3310", "сальдо поставщики"])
 
-    # Блок 3
+    # Блок 3: общее сальдо
     if all_set:
         df_total = pd.DataFrame(sorted(all_set), columns=["Контрагент"])
         df_total["1210"] = df_total["Контрагент"].map(s1210).fillna(0) / 1000
         df_total["1710"] = df_total["Контрагент"].map(s1710).fillna(0) / 1000
         df_total["3310"] = df_total["Контрагент"].map(s3310).fillna(0) / 1000
         df_total["3510"] = df_total["Контрагент"].map(s3510).fillna(0) / 1000
-        df_total["общее сальдо"] = (df_total["1210"] + df_total["1710"] - df_total["3310"] - df_total["3510"])
+        df_total["общее сальдо"] = df_total["1210"] + df_total["1710"] - df_total["3310"] - df_total["3510"]
         df_total = df_total.sort_values(by="общее сальдо", ascending=False).reset_index(drop=True)
     else:
         df_total = pd.DataFrame(columns=["Контрагент", "общее сальдо"])
@@ -106,27 +103,31 @@ def run_code_1(file_bytes: bytes) -> bytes:
     font_bold_body = Font(name="Arial", size=10, bold=True)
     align_center = Alignment(horizontal="center")
     align_left = Alignment(horizontal="left")
-    number_format_acc = '#,##0;[Red](#,##0)'
+    number_format_acc = "#,##0;[Red](#,##0)"
 
+    # Блок 1
     col_cust_contr = start_col
     col_cust_1210 = start_col + 1
     col_cust_3510 = start_col + 2
     col_cust_saldo = start_col + 3
 
+    # Блок 2
     col_supp_contr = start_col + 5
     col_supp_1710 = start_col + 6
     col_supp_3310 = start_col + 7
     col_supp_saldo = start_col + 8
 
+    # Блок 3
     col_total_contr = start_col + 10
     col_total_saldo = start_col + 11
 
+    # Заголовки блока 1
     if not df_cust.empty:
         headers_cust = {
             col_cust_contr: "Контрагент",
             col_cust_1210: "1210",
             col_cust_3510: "3510",
-            col_cust_saldo: "сальдо с заказчиками"
+            col_cust_saldo: "сальдо с заказчиками",
         }
         for col, text in headers_cust.items():
             c = ws.cell(row=start_row, column=col, value=text)
@@ -149,12 +150,13 @@ def run_code_1(file_bytes: bytes) -> bytes:
                 cell.alignment = align_center
                 cell.number_format = number_format_acc
 
+    # Заголовки блока 2
     if not df_supp.empty:
         headers_supp = {
             col_supp_contr: "Контрагент",
             col_supp_1710: "1710",
             col_supp_3310: "3310",
-            col_supp_saldo: "сальдо с поставщиками"
+            col_supp_saldo: "сальдо с поставщиками",
         }
         for col, text in headers_supp.items():
             c = ws.cell(row=start_row, column=col, value=text)
@@ -177,11 +179,9 @@ def run_code_1(file_bytes: bytes) -> bytes:
                 cell.alignment = align_center
                 cell.number_format = number_format_acc
 
+    # Заголовки блока 3
     if not df_total.empty:
-        headers_total = {
-            col_total_contr: "Контрагент",
-            col_total_saldo: "общее сальдо"
-        }
+        headers_total = {col_total_contr: "Контрагент", col_total_saldo: "общее сальдо"}
         for col, text in headers_total.items():
             c = ws.cell(row=start_row, column=col, value=text)
             c.font = font_header
@@ -205,9 +205,13 @@ def run_code_1(file_bytes: bytes) -> bytes:
         ws.column_dimensions[get_column_letter(col)].width = WIDTH_CONTR
 
     for col in [
-        col_cust_1210, col_cust_3510, col_cust_saldo,
-        col_supp_1710, col_supp_3310, col_supp_saldo,
-        col_total_saldo
+        col_cust_1210,
+        col_cust_3510,
+        col_cust_saldo,
+        col_supp_1710,
+        col_supp_3310,
+        col_supp_saldo,
+        col_total_saldo,
     ]:
         ws.column_dimensions[get_column_letter(col)].width = WIDTH_NUM
 
@@ -222,13 +226,12 @@ def run_code_1(file_bytes: bytes) -> bytes:
 def run_code_2(file_bytes: bytes) -> bytes:
     wb = load_workbook(io.BytesIO(file_bytes))
 
-    if 'Md' not in wb.sheetnames or 'Wd' not in wb.sheetnames:
+    if "Md" not in wb.sheetnames or "Wd" not in wb.sheetnames:
         raise ValueError("Код 2: нет листов Md и Wd.")
 
-    md_ws = wb['Md']
-    whd_ws = wb['Wd']
+    md_ws = wb["Md"]
+    whd_ws = wb["Wd"]
 
-    from collections import defaultdict
     payments_year = defaultdict(lambda: [0.0, 0.0, 0.0])
     performance_year = defaultdict(lambda: [0.0, 0.0, 0.0])
     payments_2025_monthly = defaultdict(lambda: [0.0] * 12)
@@ -241,7 +244,7 @@ def run_code_2(file_bytes: bytes) -> bytes:
             if not n and not c:
                 continue
             key = (str(n).strip() if n else "", str(c).strip() if c else "")
-            for idx, col in enumerate(['C', 'D', 'E']):
+            for idx, col in enumerate(["C", "D", "E"]):
                 v = sheet[f"{col}{row}"].value
                 if v is None:
                     continue
@@ -251,7 +254,7 @@ def run_code_2(file_bytes: bytes) -> bytes:
                     pass
 
     def collect_monthly_2025(sheet, target_dict):
-        start_col = column_index_from_string('AE')
+        start_col = column_index_from_string("AE")
         for row in range(2, sheet.max_row + 1):
             n = sheet[f"A{row}"].value
             c = sheet[f"B{row}"].value
@@ -273,43 +276,43 @@ def run_code_2(file_bytes: bytes) -> bytes:
     collect_monthly_2025(md_ws, performance_2025_monthly)
 
     all_keys = sorted(
-        set(payments_year.keys()) |
-        set(performance_year.keys()) |
-        set(payments_2025_monthly.keys()) |
-        set(performance_2025_monthly.keys()),
-        key=lambda x: (x[0], x[1])
+        set(payments_year.keys())
+        | set(performance_year.keys())
+        | set(payments_2025_monthly.keys())
+        | set(performance_2025_monthly.keys()),
+        key=lambda x: (x[0], x[1]),
     )
 
-    if 'Контракты py' in wb.sheetnames:
-        del wb['Контракты py']
-    ws = wb.create_sheet('Контракты py')
+    if "Контракты py" in wb.sheetnames:
+        del wb["Контракты py"]
+    ws = wb.create_sheet("Контракты py")
 
-    ws['A1'] = "ИТОГО в тыс тенге"
-    ws['A2'] = "Контрагент"
-    ws['B2'] = "Договор"
+    ws["A1"] = "ИТОГО в тыс тенге"
+    ws["A2"] = "Контрагент"
+    ws["B2"] = "Договор"
 
-    ws['C1'] = "оплата"
-    ws['C2'] = 2023
-    ws['D2'] = 2024
-    ws['E2'] = 2025
-    ws['F2'] = "Total"
+    ws["C1"] = "оплата"
+    ws["C2"] = 2023
+    ws["D2"] = 2024
+    ws["E2"] = 2025
+    ws["F2"] = "Total"
 
-    ws['G1'] = "выполнения с ндс"
-    ws['G2'] = 2023
-    ws['H2'] = 2024
-    ws['I2'] = 2025
-    ws['J2'] = "Total"
+    ws["G1"] = "выполнения с ндс"
+    ws["G2"] = 2023
+    ws["H2"] = 2024
+    ws["I2"] = 2025
+    ws["J2"] = "Total"
 
-    ws['K2'] = "дз/(аванс)"
+    ws["K2"] = "дз/(аванс)"
 
-    ws['M1'] = 'оплата'
+    ws["M1"] = "оплата"
     months = [f"2025_{str(i).zfill(2)}" for i in range(1, 13)]
-    start_col_pay = column_index_from_string('M')
+    start_col_pay = column_index_from_string("M")
     for i, label in enumerate(months):
         ws[f"{get_column_letter(start_col_pay + i)}2"] = label
 
-    ws['Y1'] = 'выполнения с ндс'
-    start_col_perf = column_index_from_string('Y')
+    ws["Y1"] = "выполнения с ндс"
+    start_col_perf = column_index_from_string("Y")
     for i, label in enumerate(months):
         ws[f"{get_column_letter(start_col_perf + i)}2"] = label
 
@@ -335,24 +338,26 @@ def run_code_2(file_bytes: bytes) -> bytes:
         ws[f"J{row}"] = f"=SUM(G{row}:I{row})"
         ws[f"K{row}"] = f"=J{row}-F{row}"
 
-        mp = payments_2025_monthly.get(key, [0]*12)
+        mp = payments_2025_monthly.get(key, [0] * 12)
         for i in range(12):
-            ws[f"{get_column_letter(start_col_pay+i)}{row}"] = mp[i]
+            ws[f"{get_column_letter(start_col_pay + i)}{row}"] = mp[i]
 
-        mf = performance_2025_monthly.get(key, [0]*12)
+        mf = performance_2025_monthly.get(key, [0] * 12)
         for i in range(12):
-            ws[f"{get_column_letter(start_col_perf+i)}{row}"] = mf[i] * 1.12
+            ws[f"{get_column_letter(start_col_perf + i)}{row}"] = mf[i] * 1.12
 
     last_row = start_row + len(all_keys) - 1
 
     regular = Font(name="Arial", size=10)
     bold = Font(name="Arial", size=10, bold=True)
 
-    for row in ws.iter_rows(min_row=1, max_row=last_row, min_col=1, max_col=column_index_from_string("AJ")):
+    for row in ws.iter_rows(
+        min_row=1, max_row=last_row, min_col=1, max_col=column_index_from_string("AJ")
+    ):
         for c in row:
             c.font = regular
 
-    for col in range(1, column_index_from_string("AJ")+1):
+    for col in range(1, column_index_from_string("AJ") + 1):
         ws[f"{get_column_letter(col)}2"].font = bold
 
     for addr in ["A1", "C1", "G1", "M1", "Y1", "K2"]:
@@ -361,14 +366,14 @@ def run_code_2(file_bytes: bytes) -> bytes:
     center = Alignment(horizontal="center", vertical="center")
     left = Alignment(horizontal="left", vertical="center")
 
-    for col in range(1, column_index_from_string("AJ")+1):
+    for col in range(1, column_index_from_string("AJ") + 1):
         addr = f"{get_column_letter(col)}2"
         ws[addr].alignment = left if addr in ["A2", "B2"] else center
 
-    num_format = '#,##0;[Red](#,##0)'
+    num_format = "#,##0;[Red](#,##0)"
     numeric_cols = list("CDEFGHIJK")
-    numeric_cols += [get_column_letter(c) for c in range(start_col_pay, start_col_pay+12)]
-    numeric_cols += [get_column_letter(c) for c in range(start_col_perf, start_col_perf+12)]
+    numeric_cols += [get_column_letter(c) for c in range(start_col_pay, start_col_pay + 12)]
+    numeric_cols += [get_column_letter(c) for c in range(start_col_perf, start_col_perf + 12)]
 
     for col in numeric_cols:
         for row in range(3, last_row + 1):
@@ -376,23 +381,17 @@ def run_code_2(file_bytes: bytes) -> bytes:
             cell.alignment = center
             cell.number_format = num_format
 
-    for row in range(1, last_row+1):
+    for row in range(1, last_row + 1):
         ws[f"A{row}"].alignment = left
         ws[f"B{row}"].alignment = left
 
-    ws["C1"].alignment = left
-    ws["G1"].alignment = left
-    ws["M1"].alignment = left
-    ws["Y1"].alignment = left
+    for addr in ["C1", "G1", "M1", "Y1"]:
+        ws[addr].alignment = left
 
-    ws.column_dimensions['A'].width = 38
-    ws.column_dimensions['B'].width = 38
-
+    ws.column_dimensions["A"].width = 38
+    ws.column_dimensions["B"].width = 38
     for col in numeric_cols:
-        if column_index_from_string(col) < start_col_pay:
-            ws.column_dimensions[col].width = 12.6
-        else:
-            ws.column_dimensions[col].width = 12.2
+        ws.column_dimensions[col].width = 12.2 if column_index_from_string(col) >= start_col_pay else 12.6
 
     thin = Side(border_style="thin", color="000000")
     border_cols = ["C", "G", "K", "M", "Y"]
@@ -403,7 +402,7 @@ def run_code_2(file_bytes: bytes) -> bytes:
                 left=thin,
                 right=cell.border.right,
                 top=cell.border.top,
-                bottom=cell.border.bottom
+                bottom=cell.border.bottom,
             )
 
     out = io.BytesIO()
@@ -412,100 +411,107 @@ def run_code_2(file_bytes: bytes) -> bytes:
 
 
 # =========================
-# UI
+# PREMIUM UI (Streamlit)
 # =========================
-st.set_page_config(
-    page_title="Excel Processor",
-    page_icon="✨",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
+st.set_page_config(page_title=" ", page_icon=" ", layout="wide", initial_sidebar_state="collapsed")
 
-# Global CSS (pretty + hide Streamlit chrome)
 st.markdown(
     """
     <style>
-      /* Hide Streamlit default elements */
       #MainMenu {visibility: hidden;}
       footer {visibility: hidden;}
       header {visibility: hidden;}
 
-      /* Layout tweaks */
-      .block-container {padding-top: 2.2rem; padding-bottom: 2.5rem; max-width: 1100px;}
-
-      /* Cards */
-      .card {
-        border: 1px solid rgba(255,255,255,0.12);
-        background: rgba(255,255,255,0.04);
-        border-radius: 18px;
-        padding: 18px 18px;
-        box-shadow: 0 10px 30px rgba(0,0,0,0.18);
+      html, body, [class*="css"], .stApp, .stMarkdown, .stText, .stButton button, .stDownloadButton button {
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "SF UI Text",
+                     system-ui, "Segoe UI", Roboto, Arial, sans-serif !important;
+        letter-spacing: -0.01em;
       }
+
+      .stApp {
+        background:
+          radial-gradient(900px circle at 15% 10%, rgba(120, 180, 255, 0.18), transparent 45%),
+          radial-gradient(900px circle at 85% 15%, rgba(180, 140, 255, 0.16), transparent 45%),
+          radial-gradient(900px circle at 50% 90%, rgba(90, 220, 190, 0.10), transparent 50%),
+          linear-gradient(180deg, #070A12 0%, #090D18 55%, #070A12 100%);
+      }
+
+      .block-container {
+        max-width: 980px;
+        padding-top: 2.2rem;
+        padding-bottom: 2.4rem;
+      }
+
+      .card {
+        border-radius: 18px;
+        padding: 18px;
+        background: rgba(255,255,255,0.035);
+        border: 1px solid rgba(255,255,255,0.08);
+        box-shadow: 0 18px 40px rgba(0,0,0,0.35);
+        backdrop-filter: blur(10px);
+      }
+
       .hero {
         border-radius: 22px;
-        padding: 22px 22px;
-        background: radial-gradient(1200px circle at 10% 10%, rgba(125, 211, 252, 0.18), transparent 40%),
-                    radial-gradient(1200px circle at 90% 10%, rgba(167, 139, 250, 0.16), transparent 40%),
-                    rgba(255,255,255,0.03);
-        border: 1px solid rgba(255,255,255,0.10);
-        box-shadow: 0 18px 40px rgba(0,0,0,0.22);
-      }
-      .title {
-        font-size: 30px;
-        font-weight: 800;
-        letter-spacing: -0.02em;
-        margin: 0 0 4px 0;
-      }
-      .subtitle {
-        opacity: 0.85;
-        margin: 0;
-        font-size: 14px;
-      }
-      .small {
-        opacity: 0.75;
-        font-size: 12px;
-        margin-top: 8px;
+        padding: 18px 18px;
+        background: rgba(255,255,255,0.03);
+        border: 1px solid rgba(255,255,255,0.08);
+        box-shadow: 0 22px 50px rgba(0,0,0,0.40);
+        backdrop-filter: blur(12px);
       }
 
-      /* Buttons */
-      div.stDownloadButton > button,
-      div.stButton > button {
+      .hero-title {
+        font-size: 22px;
+        font-weight: 700;
+        margin: 0;
+      }
+
+      .hero-sub {
+        margin: 6px 0 0 0;
+        opacity: 0.78;
+        font-size: 13px;
+      }
+
+      .muted {
+        opacity: 0.75;
+        font-size: 12px;
+        margin-top: 10px;
+      }
+
+      div.stButton > button, div.stDownloadButton > button {
         border-radius: 14px !important;
-        padding: 0.65rem 1rem !important;
+        padding: 0.72rem 1rem !important;
         font-weight: 700 !important;
       }
 
-      /* File uploader */
+      /* Make uploader & radio look cleaner */
       [data-testid="stFileUploader"] section {
         border-radius: 16px;
         padding: 10px;
+        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(255,255,255,0.02);
       }
 
-      /* Radio style */
       [role="radiogroup"] {
         border-radius: 16px;
         padding: 12px 12px 6px 12px;
-        border: 1px solid rgba(255,255,255,0.10);
-        background: rgba(255,255,255,0.03);
+        border: 1px solid rgba(255,255,255,0.08);
+        background: rgba(255,255,255,0.02);
       }
     </style>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
 st.markdown(
     """
     <div class="hero">
-      <div class="title">✨ Excel Processor</div>
-      <p class="subtitle">
-        Загрузите файл → выберите сценарий обработки → скачайте готовый Excel.
-      </p>
-      <div class="small">
-        Поддерживаемые форматы: <b>.xlsx</b>, <b>.xlsm</b> (без превью, только результат).
-      </div>
+      <p class="hero-title">Загрузка и обработка Excel</p>
+      <p class="hero-sub">Загрузите файл → выберите сценарий обработки → скачайте готовый результат.</p>
+      <div class="muted">Поддерживаемые форматы: <b>.xlsx</b>, <b>.xlsm</b> • Без превью • Только итоговый файл</div>
     </div>
     """,
-    unsafe_allow_html=True
+    unsafe_allow_html=True,
 )
 
 st.write("")
@@ -514,26 +520,25 @@ left, right = st.columns([1.05, 0.95], gap="large")
 
 with left:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    uploaded = st.file_uploader("1) Загрузите Excel файл", type=["xlsx", "xlsm"])
+    uploaded = st.file_uploader("Загрузите Excel файл", type=["xlsx", "xlsm"])
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.write("")
 
     st.markdown('<div class="card">', unsafe_allow_html=True)
     mode = st.radio(
-        "2) Выберите обработку",
+        "Выберите обработку",
         options=["Код 1 — Сальдо PY", "Код 2 — Контракты py", "Оба (Код 1 → Код 2)"],
         index=0,
-        horizontal=False
     )
     st.markdown("</div>", unsafe_allow_html=True)
 
 with right:
     st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown("### 3) Запуск и скачивание")
+    st.markdown("### Запуск и скачивание")
     st.caption("Нажмите «Обработать». После завершения появится кнопка скачивания готового файла.")
 
-    run_disabled = (uploaded is None)
+    run_disabled = uploaded is None
     run_btn = st.button("🚀 Обработать", type="primary", disabled=run_disabled)
 
     status_box = st.empty()
@@ -547,28 +552,27 @@ with right:
 
 st.write("")
 
-if run_btn:
+if run_btn and uploaded is not None:
     file_bytes = uploaded.getvalue()
 
-    # nice staged progress
     try:
-        status_box.info("Подготовка файла…")
+        status_box.info("Подготовка…")
         progress.progress(10)
-        time.sleep(0.2)
+        time.sleep(0.15)
 
         out_bytes = file_bytes
 
         if mode in ["Код 1 — Сальдо PY", "Оба (Код 1 → Код 2)"]:
-            status_box.info("Выполняю Код 1 (Сальдо PY)…")
-            progress.progress(30)
+            status_box.info("Выполняю Код 1…")
+            progress.progress(35)
             out_bytes = run_code_1(out_bytes)
-            progress.progress(55)
+            progress.progress(60)
 
         if mode in ["Код 2 — Контракты py", "Оба (Код 1 → Код 2)"]:
-            status_box.info("Выполняю Код 2 (Контракты py)…")
-            progress.progress(70)
+            status_box.info("Выполняю Код 2…")
+            progress.progress(75)
             out_bytes = run_code_2(out_bytes)
-            progress.progress(90)
+            progress.progress(92)
 
         status_box.success("Готово! Можно скачивать результат.")
         progress.progress(100)
@@ -576,16 +580,13 @@ if run_btn:
         st.markdown('<div class="card">', unsafe_allow_html=True)
         st.markdown("### ✅ Результат готов")
 
-        # Decide mime (xlsx is fine for xlsm too, but keep generic)
         st.download_button(
             label="⬇️ Скачать обработанный Excel",
             data=out_bytes,
             file_name=f"processed_{uploaded.name}",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
+            use_container_width=True,
         )
-
-        st.caption("Если кнопка не появляется — значит обработка завершилась ошибкой выше.")
         st.markdown("</div>", unsafe_allow_html=True)
 
     except Exception as e:
