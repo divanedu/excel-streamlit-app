@@ -15,23 +15,23 @@ from openpyxl.utils import get_column_letter, column_index_from_string
 # Helpers
 # =========================
 def safe_sheet_name(name: str) -> str:
-    """Excel: max 31 chars, cannot contain : \ / ? * [ ]"""
+    """Excel: max 31 chars, cannot contain : \\ / ? * [ ]"""
     banned = [":", "\\", "/", "?", "*", "[", "]"]
     for ch in banned:
         name = name.replace(ch, "")
-    name = name.strip() or "лист"
+    name = (name or "").strip() or "лист"
     return name[:31]
 
 
 def split_prefix_suffix4(sheet_name: str) -> Tuple[str, str]:
-    """prefix + last 4 chars (lowercase)"""
+    """prefix + last 4 chars (lowercased)"""
     if len(sheet_name) < 4:
         return sheet_name, ""
     return sheet_name[:-4], sheet_name[-4:].lower()
 
 
 def split_prefix_suffix2(sheet_name: str) -> Tuple[str, str]:
-    """prefix + last 2 chars (lowercase)"""
+    """prefix + last 2 chars (lowercased)"""
     if len(sheet_name) < 2:
         return sheet_name, ""
     return sheet_name[:-2], sheet_name[-2:].lower()
@@ -43,8 +43,8 @@ def normalize_prefix(prefix: str) -> str:
 
 # =========================
 # CODE 1 (Saldo) — multi-company by prefix + ####
-# Looks for sheets whose last 4 chars are 1210/1710/3310/3510
-# Creates one output sheet per prefix: "<prefix>сальд" or "сальд" if no prefix
+# Finds sheets where last 4 chars are 1210/1710/3310/3510
+# Creates output sheet per prefix: "<prefix>сальд" or "сальд" if no prefix
 # =========================
 def run_code_1(file_bytes: bytes) -> bytes:
     wb = load_workbook(io.BytesIO(file_bytes))
@@ -61,9 +61,8 @@ def run_code_1(file_bytes: bytes) -> bytes:
                 prefix_to_sheets[prefix][suf] = sh
 
     if not prefix_to_sheets:
-        raise ValueError("Код 1: не найдено листов с окончаниями 1210/1710/3310/3510.")
+        raise ValueError("Код 1: не найдено листов, заканчивающихся на 1210/1710/3310/3510.")
 
-    # Create saldo per prefix
     for prefix, suf_map in prefix_to_sheets.items():
         sheet_data = {}
 
@@ -99,10 +98,8 @@ def run_code_1(file_bytes: bytes) -> bytes:
         all_set = cust_set.union(supp_set)
 
         if not cust_set and not supp_set:
-            # For this prefix there is no data — just skip
             continue
 
-        # Customers
         if cust_set:
             df_cust = pd.DataFrame(sorted(cust_set), columns=["Контрагент"])
             df_cust["1210"] = df_cust["Контрагент"].map(s1210).fillna(0) / 1000
@@ -112,7 +109,6 @@ def run_code_1(file_bytes: bytes) -> bytes:
         else:
             df_cust = pd.DataFrame(columns=["Контрагент", "1210", "3510", "сальдо заказчики"])
 
-        # Suppliers
         if supp_set:
             df_supp = pd.DataFrame(sorted(supp_set), columns=["Контрагент"])
             df_supp["1710"] = df_supp["Контрагент"].map(s1710).fillna(0) / 1000
@@ -122,7 +118,6 @@ def run_code_1(file_bytes: bytes) -> bytes:
         else:
             df_supp = pd.DataFrame(columns=["Контрагент", "1710", "3310", "сальдо поставщики"])
 
-        # Total
         if all_set:
             df_total = pd.DataFrame(sorted(all_set), columns=["Контрагент"])
             df_total["1210"] = df_total["Контрагент"].map(s1210).fillna(0) / 1000
@@ -139,7 +134,6 @@ def run_code_1(file_bytes: bytes) -> bytes:
             wb.remove(wb[out_sheet_name])
         ws = wb.create_sheet(out_sheet_name)
 
-        # Formatting
         ws["A1"] = "Все значения указаны в тысячах тенге"
         ws["A1"].font = Font(name="Arial", size=10, bold=True)
 
@@ -153,23 +147,19 @@ def run_code_1(file_bytes: bytes) -> bytes:
         align_left = Alignment(horizontal="left")
         number_format_acc = "#,##0;[Red](#,##0)"
 
-        # Block 1 columns
         col_cust_contr = start_col
         col_cust_1210 = start_col + 1
         col_cust_3510 = start_col + 2
         col_cust_saldo = start_col + 3
 
-        # Block 2 columns (gap 1 col)
         col_supp_contr = start_col + 5
         col_supp_1710 = start_col + 6
         col_supp_3310 = start_col + 7
         col_supp_saldo = start_col + 8
 
-        # Block 3 columns (gap 1 col)
         col_total_contr = start_col + 10
         col_total_saldo = start_col + 11
 
-        # Block 1
         if not df_cust.empty:
             headers = {
                 col_cust_contr: "Контрагент",
@@ -198,7 +188,6 @@ def run_code_1(file_bytes: bytes) -> bytes:
                     cell.alignment = align_center
                     cell.number_format = number_format_acc
 
-        # Block 2
         if not df_supp.empty:
             headers = {
                 col_supp_contr: "Контрагент",
@@ -227,7 +216,6 @@ def run_code_1(file_bytes: bytes) -> bytes:
                     cell.alignment = align_center
                     cell.number_format = number_format_acc
 
-        # Block 3
         if not df_total.empty:
             headers = {col_total_contr: "Контрагент", col_total_saldo: "общее сальдо"}
             for col, text in headers.items():
@@ -246,7 +234,6 @@ def run_code_1(file_bytes: bytes) -> bytes:
                 cell.alignment = align_center
                 cell.number_format = number_format_acc
 
-        # widths
         WIDTH_CONTR = 30
         WIDTH_NUM = 18
         for col in [col_cust_contr, col_supp_contr, col_total_contr]:
@@ -265,7 +252,7 @@ def run_code_1(file_bytes: bytes) -> bytes:
 
 # =========================
 # CODE 2 (Contracts) — multi-company by prefix + (md/wd) ignoring case
-# Creates output per prefix: "<prefix>контр" or "контр" if no prefix
+# Creates output sheet per prefix: "<prefix>контр" or "контр" if no prefix
 # =========================
 def run_code_2(file_bytes: bytes) -> bytes:
     wb = load_workbook(io.BytesIO(file_bytes))
@@ -462,182 +449,152 @@ def run_code_2(file_bytes: bytes) -> bytes:
 
 
 # =========================
-# UI — Navy + Times, bigger typography, no weird extra bars
+# UI — Theme toggle (Dark/Light), no gradients, default font
 # =========================
-st.set_page_config(page_title=" ", page_icon=" ", layout="wide", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="", page_icon=None, layout="wide", initial_sidebar_state="collapsed")
+
+if "theme" not in st.session_state:
+    st.session_state.theme = "Темная"
+
+with st.sidebar:
+    st.session_state.theme = st.radio("Тема", ["Темная", "Светлая"], index=0)
+
+# Theme variables
+if st.session_state.theme == "Темная":
+    BG = "#000000"
+    TEXT = "#F2F2F2"
+    CARD = "#0F0F0F"
+    BORDER = "#2A2A2A"
+    MUTED = "#BDBDBD"
+    BTN_BG = "#1F1F1F"
+    BTN_TEXT = "#F2F2F2"
+    PROG = "#F2F2F2"
+else:
+    BG = "#F3EBDD"  # beige
+    TEXT = "#141414"
+    CARD = "#FFFFFF"
+    BORDER = "#D8D0C4"
+    MUTED = "#4B4B4B"
+    BTN_BG = "#141414"
+    BTN_TEXT = "#FFFFFF"
+    PROG = "#141414"
 
 st.markdown(
-    """
+    f"""
     <style>
-      #MainMenu {visibility: hidden;}
-      footer {visibility: hidden;}
-      header {visibility: hidden;}
+      #MainMenu {{visibility: hidden;}}
+      footer {{visibility: hidden;}}
+      header {{visibility: hidden;}}
 
-      :root{
-        --navy: #071427;
-        --navy2:#0A1C34;
-        --card: rgba(255,255,255,0.06);
-        --card2: rgba(255,255,255,0.04);
-        --border: rgba(255,255,255,0.12);
-        --text: #F2F2F2;
-        --muted: rgba(242,242,242,0.72);
-        --gold: #C9A86A;
-        --gold2:#B9924E;
-      }
+      .stApp {{
+        background: {BG};
+        color: {TEXT};
+      }}
 
-      html, body, [class*="css"], .stApp {
-        font-family: "Times New Roman", Times, serif !important;
-        color: var(--text) !important;
+      /* Keep default fonts; only set sizes and colors */
+      html, body, [class*="css"], .stApp {{
         font-size: 18px !important;
-      }
+      }}
 
-      .stApp {
-        background:
-          radial-gradient(900px circle at 15% 0%, rgba(201,168,106,0.16), transparent 55%),
-          radial-gradient(900px circle at 85% 10%, rgba(255,255,255,0.08), transparent 60%),
-          linear-gradient(180deg, var(--navy) 0%, var(--navy2) 55%, var(--navy) 100%);
-      }
-
-      .block-container{
+      .block-container {{
         max-width: 1050px;
-        padding-top: 2.2rem;
-        padding-bottom: 2.4rem;
-      }
+        padding-top: 1.8rem;
+        padding-bottom: 2.0rem;
+      }}
 
-      /* Headline */
-      .page-head{
-        margin-bottom: 18px;
-        padding: 18px 20px;
-        border-radius: 16px;
-        background: rgba(255,255,255,0.035);
-        border: 1px solid var(--border);
-        box-shadow: 0 18px 50px rgba(0,0,0,0.35);
-      }
-      .page-head h1{
-        margin:0;
-        font-size: 28px;
+      .card {{
+        background: {CARD};
+        border: 1px solid {BORDER};
+        border-radius: 14px;
+        padding: 18px;
+      }}
+
+      .title {{
+        font-size: 24px;
         font-weight: 700;
-        letter-spacing: 0.01em;
-      }
-      .page-head p{
-        margin: 8px 0 0 0;
-        color: var(--muted);
-        font-size: 17px;
-        line-height: 1.35;
-      }
-
-      /* Cards */
-      .card{
-        border-radius: 16px;
-        padding: 18px 18px;
-        background: var(--card);
-        border: 1px solid var(--border);
-        box-shadow: 0 18px 44px rgba(0,0,0,0.32);
-        backdrop-filter: blur(10px);
-      }
-
-      /* Make section headers bigger */
-      .card h2{
-        margin: 0 0 8px 0;
-        font-size: 22px;
-        font-weight: 700;
-      }
-      .card .sub{
         margin: 0 0 12px 0;
-        color: var(--muted);
+        color: {TEXT};
+      }}
+
+      .sub {{
+        margin: 0 0 14px 0;
+        color: {MUTED};
         font-size: 16px;
-      }
+      }}
 
-      /* Uploader */
-      [data-testid="stFileUploader"] label{
-        font-size: 18px !important;
-        font-weight: 700 !important;
-      }
-      [data-testid="stFileUploader"] section{
-        border-radius: 14px;
+      /* Inputs */
+      [data-testid="stFileUploader"] section {{
+        border-radius: 12px;
         padding: 12px;
-        border: 1px solid rgba(255,255,255,0.14);
-        background: var(--card2);
-      }
+        border: 1px solid {BORDER};
+        background: {CARD};
+      }}
 
-      /* Radio */
-      [role="radiogroup"]{
-        border-radius: 14px;
+      [role="radiogroup"] {{
+        border-radius: 12px;
         padding: 12px 12px 8px 12px;
-        border: 1px solid rgba(255,255,255,0.14);
-        background: var(--card2);
-      }
-      [role="radiogroup"] label{
-        font-size: 18px !important;
-      }
+        border: 1px solid {BORDER};
+        background: {CARD};
+      }}
 
       /* Buttons */
-      div.stButton > button{
+      div.stButton > button {{
         width: 100%;
         border-radius: 12px !important;
-        padding: 0.80rem 1rem !important;
+        padding: 0.85rem 1rem !important;
         font-weight: 700 !important;
         font-size: 18px !important;
-        background: linear-gradient(180deg, var(--gold) 0%, var(--gold2) 100%) !important;
-        color: #1A1A1A !important;
-        border: 1px solid rgba(0,0,0,0.18) !important;
-      }
-      div.stButton > button:hover{
-        filter: brightness(0.98);
-      }
+        background: {BTN_BG} !important;
+        color: {BTN_TEXT} !important;
+        border: 1px solid {BORDER} !important;
+      }}
 
-      div.stDownloadButton > button{
+      div.stDownloadButton > button {{
         width: 100%;
         border-radius: 12px !important;
-        padding: 0.80rem 1rem !important;
+        padding: 0.85rem 1rem !important;
         font-weight: 700 !important;
         font-size: 18px !important;
-        background: rgba(255,255,255,0.10) !important;
-        color: var(--text) !important;
-        border: 1px solid rgba(255,255,255,0.22) !important;
-      }
-      div.stDownloadButton > button:hover{
-        border-color: rgba(201,168,106,0.55) !important;
-      }
+        background: {BTN_BG} !important;
+        color: {BTN_TEXT} !important;
+        border: 1px solid {BORDER} !important;
+      }}
 
-      /* Progress bar color */
-      div[data-testid="stProgress"] > div > div{
-        background-color: var(--gold) !important;
-      }
+      /* Progress bar */
+      div[data-testid="stProgress"] > div > div {{
+        background-color: {PROG} !important;
+      }}
 
-      /* Status text size */
-      .stAlert, .stCaption, .stMarkdown p{
-        font-size: 16px !important;
-      }
+      /* Text colors for markdown */
+      .stMarkdown, .stMarkdown p, .stCaption, label {{
+        color: {TEXT} !important;
+      }}
+      .stCaption {{
+        color: {MUTED} !important;
+      }}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-st.markdown(
-    """
-    <div class="page-head">
-      <h1>Обработка Excel</h1>
-      <p>Загрузите файл, выберите сценарий обработки и скачайте готовый результат.</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+# Simple header (no gradients)
+st.markdown(f"<div class='card'><div class='title'>Обработка Excel</div><div class='sub'>Загрузите файл, выберите сценарий и скачайте результат.</div></div>", unsafe_allow_html=True)
+st.write("")
 
 left, right = st.columns([1.05, 0.95], gap="large")
 
 with left:
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown("<h2>Файл</h2>", unsafe_allow_html=True)
-    st.markdown('<div class="sub">Поддерживаются форматы .xlsx и .xlsm</div>', unsafe_allow_html=True)
-    uploaded = st.file_uploader("Загрузите Excel файл", type=["xlsx", "xlsm"])
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.markdown("<div class='title'>Файл</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sub'>Поддерживаются форматы .xlsx и .xlsm</div>", unsafe_allow_html=True)
+    uploaded = st.file_uploader("Загрузите Excel файл", type=["xlsx", "xlsm"], label_visibility="collapsed")
     st.markdown("</div>", unsafe_allow_html=True)
 
     st.write("")
 
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown("<h2>Сценарий</h2>", unsafe_allow_html=True)
-    st.markdown('<div class="sub">Выберите, какая обработка будет применена к файлу</div>', unsafe_allow_html=True)
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.markdown("<div class='title'>Сценарий</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sub'>Выберите нужную обработку</div>", unsafe_allow_html=True)
     mode = st.radio(
         "Выберите обработку",
         options=["Сальдо", "Контракты", "Оба (Сальдо → Контракты)"],
@@ -647,11 +604,11 @@ with left:
     st.markdown("</div>", unsafe_allow_html=True)
 
 with right:
-    st.markdown('<div class="card">', unsafe_allow_html=True)
-    st.markdown("<h2>Запуск</h2>", unsafe_allow_html=True)
-    st.markdown('<div class="sub">Нажмите «Обработать». После завершения появится кнопка скачивания.</div>', unsafe_allow_html=True)
+    st.markdown("<div class='card'>", unsafe_allow_html=True)
+    st.markdown("<div class='title'>Запуск</div>", unsafe_allow_html=True)
+    st.markdown("<div class='sub'>Нажмите «Обработать». После завершения появится кнопка скачивания.</div>", unsafe_allow_html=True)
 
-    run_btn = st.button("Обработать", type="primary", disabled=(uploaded is None))
+    run_btn = st.button("Обработать", disabled=(uploaded is None))
 
     status_box = st.empty()
     progress = st.progress(0)
@@ -668,20 +625,20 @@ if run_btn and uploaded is not None:
     file_bytes = uploaded.getvalue()
 
     try:
-        status_box.info("Подготовка")
+        status_box.info("Подготовка…")
         progress.progress(12)
-        time.sleep(0.12)
+        time.sleep(0.10)
 
         out_bytes = file_bytes
 
         if mode in ["Сальдо", "Оба (Сальдо → Контракты)"]:
-            status_box.info("Обработка: Сальдо")
+            status_box.info("Обработка: Сальдо…")
             progress.progress(40)
             out_bytes = run_code_1(out_bytes)
             progress.progress(64)
 
         if mode in ["Контракты", "Оба (Сальдо → Контракты)"]:
-            status_box.info("Обработка: Контракты")
+            status_box.info("Обработка: Контракты…")
             progress.progress(78)
             out_bytes = run_code_2(out_bytes)
             progress.progress(92)
@@ -689,8 +646,8 @@ if run_btn and uploaded is not None:
         status_box.success("Готово. Можно скачать результат.")
         progress.progress(100)
 
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.markdown("<h2>Результат</h2>", unsafe_allow_html=True)
+        st.markdown("<div class='card'>", unsafe_allow_html=True)
+        st.markdown("<div class='title'>Результат</div>", unsafe_allow_html=True)
 
         st.download_button(
             label="Скачать обработанный Excel",
